@@ -20,15 +20,22 @@ const ICONS = {
   verbose: "✳️",
 };
 
-// colorize levels using chalk
+// colorize levels using chalk (compatible with chalk@5+)
 function colorizeLevel(level, msg) {
   switch (level) {
-    case "error": return chalk.bold.red(msg);
-    case "warn": return chalk.keyword("orange")(msg);
-    case "info": return chalk.cyan(msg);
-    case "debug": return chalk.magenta(msg);
-    case "verbose": return chalk.gray(msg);
-    default: return msg;
+    case "error":
+      return chalk.bold.red(msg);
+    case "warn":
+      // chalk.keyword removed in v5; use a bright yellow for visibility
+      return chalk.yellowBright(msg);
+    case "info":
+      return chalk.cyan(msg);
+    case "debug":
+      return chalk.magenta(msg);
+    case "verbose":
+      return chalk.gray(msg);
+    default:
+      return msg;
   }
 }
 
@@ -36,21 +43,39 @@ function colorizeLevel(level, msg) {
 const prettyConsole = printf(({ level, message, timestamp, ...meta }) => {
   const time = chalk.dim(new Date(timestamp).toLocaleString());
   const icon = ICONS[level] || "•";
-  const lvl = colorizeLevel(level, level.toUpperCase().padEnd(7));
-  // safely stringify meta if provided
-  const metaKeys = Object.keys(meta || {}).filter(k => k !== "stack" && k !== "message");
+
+  // make level label (uppercase, padded) and colorize
+  const levelLabel = level.toUpperCase().padEnd(7);
+  const lvl = colorizeLevel(level, levelLabel);
+
+  // message may be object (from formatArgs) or string
+  let msgStr;
+  if (typeof message === "object" && message !== null) {
+    // expect { message, stack } or arbitrary object
+    if (message.stack) {
+      msgStr = message.message;
+      // attach stack later
+    } else {
+      msgStr = JSON.stringify(message, null, 2);
+    }
+  } else {
+    msgStr = String(message);
+  }
+
+  // safely stringify remaining meta if provided (exclude internal fields)
+  const metaKeys = Object.keys(meta || {}).filter(
+    (k) => k !== "stack" && k !== "message" && k !== "level" && k !== "timestamp"
+  );
   const metaStr = metaKeys.length ? chalk.dim(` ${JSON.stringify(meta, null, 2)}`) : "";
-  // if message is an error stack, show stack
-  const stack = (meta && meta.stack) ? `\n${chalk.gray(meta.stack)}` : "";
-  return `${time} ${icon} ${lvl} ${message}${metaStr}${stack}`;
+
+  // if message included a stack, print it
+  const stack = (message && message.stack) ? `\n${chalk.gray(message.stack)}` : "";
+
+  return `${time} ${icon} ${lvl} ${msgStr}${metaStr}${stack}`;
 });
 
 // plain JSON format for file logs (structured)
-const jsonFile = combine(
-  timestamp(),
-  splat(),
-  format.json()
-);
+const jsonFile = combine(timestamp(), splat(), format.json());
 
 // create logger
 const logger = createLogger({
@@ -69,7 +94,7 @@ const logger = createLogger({
       maxFiles: 5,
       tailable: true,
       handleExceptions: true,
-    })
+    }),
   ],
   exitOnError: false,
 });
@@ -91,7 +116,7 @@ function formatArgs(args) {
       return { message: a.message, stack: a.stack };
     }
     // simple string or object
-    return (typeof a === "object") ? JSON.stringify(a) : String(a);
+    return typeof a === "object" ? a : String(a);
   }
   // multiple args -> join but preserve objects
   return args.map((a) => {
