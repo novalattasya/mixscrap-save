@@ -43,6 +43,9 @@ export async function insertComic(meta){
   const now = new Date().toISOString();
   const payload = {
     title: meta.title,
+    author: meta.author || null,     // <- baru
+    status: meta.status || null,     // <- baru
+    type: meta.type || null,         // <- baru
     param: meta.param,
     thumbnail: meta.thumbnail || null,
     genre: meta.genre || [],
@@ -58,7 +61,9 @@ export async function insertComic(meta){
 
 export async function updateComic(param, patch){
   const now = new Date().toISOString();
-  const resp = await supabase.from("comics").update({ ...patch, updated_at: now }).eq("param", param).select();
+  // allow patch to include author/status/type if present
+  const p = { ...patch, updated_at: now };
+  const resp = await supabase.from("comics").update(p).eq("param", param).select();
   logResp("updateComic", resp);
   if (resp.error) throw resp.error;
   return Array.isArray(resp.data) ? resp.data[0] : resp.data;

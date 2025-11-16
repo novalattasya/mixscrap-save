@@ -49,6 +49,9 @@ async function processKomikItem(item){
       info("New comic:", komik.title, "-> inserting metadata");
       const meta = {
         title: komik.title,
+        author: komik.author || null,   // baru
+        status: komik.status || null,   // baru
+        type: komik.type || null,       // baru
         param: komik.param,
         thumbnail: komik.thumbnail,
         genre: komik.genre,
@@ -86,13 +89,22 @@ async function processKomikItem(item){
 
     // --- existing comic: possible metadata update + chapter comparison ---
     const metaPatch = {};
+    // NEW fields
+    if ((existing.author || "") !== (komik.author || "")) metaPatch.author = komik.author || null;
+    if ((existing.status || "") !== (komik.status || "")) metaPatch.status = komik.status || null;
+    if ((existing.type || "") !== (komik.type || "")) metaPatch.type = komik.type || null;
     if (JSON.stringify(existing.genre || []) !== JSON.stringify(komik.genre || [])) metaPatch.genre = komik.genre;
     if ((existing.synopsis || "") !== (komik.synopsis || "")) metaPatch.synopsis = komik.synopsis;
     if ((existing.thumbnail || "") !== (komik.thumbnail || "")) metaPatch.thumbnail = komik.thumbnail;
     if (Object.keys(metaPatch).length > 0) {
       info("Metadata changed for", param, "-> updating", Object.keys(metaPatch));
-      await db.updateComic(param, metaPatch).catch(e => warn("Failed updateComic", e && e.message ? e.message : e));
+      try {
+        await db.updateComic(param, metaPatch);
+      } catch (e) {
+        warn("Failed updateComic", e && e.message ? e.message : e);
+      }
     }
+
 
     // compare chapter lists
     const remoteChapters = komik.chapters || [];

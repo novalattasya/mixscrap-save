@@ -4,7 +4,7 @@ import { info } from "../logger.js";
 
 const DB_PATH = path.resolve("./data/db.json");
 const DEFAULT = {
-  comics: [],   // { id: uuid, title, param, thumbnail, genre:[], synopsis, created_at, updated_at }
+  comics: [],   // { id: uuid, title, author, status, type, param, thumbnail, genre:[], synopsis, created_at, updated_at }
   chapters: [], // { id: uuid, comic_param, chapter, param, release, detail_url, created_at }
   pages: []     // { id: uuid, chapter_param, images: [urls], created_at }
 };
@@ -45,6 +45,9 @@ export async function insertComic(meta){
   const record = {
     id: uuid(),
     title: meta.title,
+    author: meta.author || null,   // new
+    status: meta.status || null,   // new
+    type: meta.type || null,       // new
     param: meta.param,
     thumbnail: meta.thumbnail || null,
     genre: meta.genre || [],
@@ -57,11 +60,13 @@ export async function insertComic(meta){
   return record;
 }
 
+
 export async function updateComic(param, patch){
   const db = await readDb();
   const idx = db.comics.findIndex(c => c.param === param);
   if (idx === -1) throw new Error("comic not found");
-  db.comics[idx] = { ...db.comics[idx], ...patch, updated_at: nowIso() };
+  const now = nowIso();
+  db.comics[idx] = { ...db.comics[idx], ...patch, updated_at: now };
   await writeDb(db);
   return db.comics[idx];
 }
