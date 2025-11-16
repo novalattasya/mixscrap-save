@@ -66,6 +66,15 @@ export async function updateComic(param, patch){
   return db.comics[idx];
 }
 
+export async function updateChapterStatus(chapterParam, { status, last_scraped_at, last_error, retries }){
+  const db = await readDb();
+  const idx = db.chapters.findIndex(c => c.param === chapterParam);
+  if (idx === -1) throw new Error("chapter not found");
+  db.chapters[idx] = { ...db.chapters[idx], ...(status!==undefined?{status}:{}), ...(last_scraped_at?{last_scraped_at}:{}), ...(last_error!==undefined?{last_error}:{}), ...(retries!==undefined?{retries}:{}) };
+  await writeDb(db);
+  return db.chapters[idx];
+}
+
 export async function listChaptersByComicParam(param){
   const db = await readDb();
   return db.chapters.filter(ch => ch.comic_param === param).sort((a,b)=> {
@@ -83,6 +92,9 @@ export async function findChapterByParam(chapterParam){
 export async function insertChapter(comic_param, chapterMeta){
   const db = await readDb();
   const now = nowIso();
+  const exists = db.chapters.find(c => c.param === chapterMeta.param);
+  if (exists) return exists; // idempotent: return existing row
+
   const record = {
     id: uuid(),
     comic_param,
@@ -90,6 +102,10 @@ export async function insertChapter(comic_param, chapterMeta){
     param: chapterMeta.param,
     release: chapterMeta.release || null,
     detail_url: chapterMeta.detail_url,
+    status: "pending",
+    retries: 0,
+    last_error: null,
+    last_scraped_at: null,
     created_at: now
   };
   db.chapters.push(record);
@@ -97,18 +113,34 @@ export async function insertChapter(comic_param, chapterMeta){
   return record;
 }
 
+
 export async function insertPages(chapter_param, images){
   const db = await readDb();
   const now = nowIso();
-  const record = {
-    id: uuid(),
-    chapter_param,
-    images: images || [],
-    created_at: now
-  };
-  db.pages.push(record);
+  // if pages record exists, update images + verified
+  const existsIdx = db.pages.findIndex(p => p.chapter_param === chapter_param);
+  if (existsIdx !== -1) {
+    db.pages[existsIdx] = {
+      ...db.pages[existsIdx],
+      images,
+      verified: images && images.length > 0,
+      last_verified_at: images && images.length > 0 ? now : null,
+      last_error: images && images.length > 0 ? null : db.pages[existsIdx].last_error,
+    };
+  } else {
+    const record = {
+      id: uuid(),
+      chapter_param,
+      images: images || [],
+      verified: images && images.length > 0,
+      last_verified_at: images && images.length > 0 ? now : null,
+      last_error: null,
+      created_at: now
+    };
+    db.pages.push(record);
+  }
   await writeDb(db);
-  return record;
+  return db.pages.find(p => p.chapter_param === chapter_param);
 }
 
 export async function findPagesByChapterParam(chapter_param){
