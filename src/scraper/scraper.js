@@ -132,6 +132,25 @@ async function processKomikItem(item){
     })();
 
     info(`Comic ${param}: remote=${remoteParams.length}, db=${dbParams.length}, missing=${missing.length}, failedOrIncomplete=${failedOrIncomplete.length}, numericGaps=${numericMissing.length}`);
+    
+    // Log detailed info about each category
+    if (missing.length > 0) {
+      info(`  [NEW] ${missing.length} new chapter(s): ${missing.map(c => c.param).join(", ")}`);
+    }
+    if (failedOrIncomplete.length > 0) {
+      const pending = failedOrIncomplete.filter(c => c.status === "pending").length;
+      const failed = failedOrIncomplete.filter(c => c.status === "failed").length;
+      const noStatus = failedOrIncomplete.filter(c => !c.status).length;
+      info(`  [RETRY] ${failedOrIncomplete.length} chapter(s) to retry: ${pending} pending, ${failed} failed, ${noStatus} no-status`);
+      info(`    Chapters: ${failedOrIncomplete.map(c => `${c.param}(${c.status || 'none'})`).join(", ")}`);
+    }
+    if (numericMissing.length > 0) {
+      info(`  [GAP] ${numericMissing.length} numeric gap(s): ${numericMissing.map(c => c.param).join(", ")}`);
+    }
+    const alreadyScraped = dbChapters.filter(c => c.status === "scraped").length;
+    if (alreadyScraped > 0) {
+      info(`  [SKIP] ${alreadyScraped} chapter(s) already scraped (will skip)`);
+    }
 
     // Insert missing chapter metas (dedup + tolerant)
     const uniqueMissing = [];
@@ -177,6 +196,13 @@ async function processKomikItem(item){
         detail_url: dc.detail_url,
         release: dc.release
       });
+    }
+
+    // Log what will be scraped
+    if (toScrape.length > 0) {
+      info(`Starting scrape for ${toScrape.length} chapter(s): ${toScrape.map(c => c.param).join(", ")}`);
+    } else {
+      info(`No chapters to scrape (all ${dbParams.length} are already completed)`);
     }
 
     // scrape chapters with controlled concurrency
