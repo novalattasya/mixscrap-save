@@ -75,7 +75,15 @@ export async function updateChapterStatus(chapterParam, { status, last_scraped_a
   const db = await readDb();
   const idx = db.chapters.findIndex(c => c.param === chapterParam);
   if (idx === -1) throw new Error("chapter not found");
-  db.chapters[idx] = { ...db.chapters[idx], ...(status!==undefined?{status}:{}), ...(last_scraped_at?{last_scraped_at}:{}), ...(last_error!==undefined?{last_error}:{}), ...(retries!==undefined?{retries}:{}) };
+  
+  // Build patch object only with keys that were provided
+  const patch = {};
+  if (status !== undefined) patch.status = status;
+  if (last_scraped_at !== undefined) patch.last_scraped_at = last_scraped_at;
+  if (last_error !== undefined) patch.last_error = last_error;  // <- now correctly handles null
+  if (retries !== undefined) patch.retries = retries;
+  
+  db.chapters[idx] = { ...db.chapters[idx], ...patch };
   await writeDb(db);
   return db.chapters[idx];
 }

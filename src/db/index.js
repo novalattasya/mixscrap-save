@@ -20,3 +20,4 @@ export const insertChapter = db.insertChapter;
 export const insertPages = db.insertPages;
 export const findPagesByChapterParam = db.findPagesByChapterParam;
 export const listChaptersByComicParam = db.listChaptersByComicParam || (async (p)=>[]);
+export const updateChapterStatus = db.updateChapterStatus;
