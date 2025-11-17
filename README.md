@@ -53,7 +53,7 @@ A robust and intelligent web scraper for collecting manga/comics metadata and pa
 ### 1. Clone and Install Dependencies
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/novalattasya/mixscrap-save.git
 cd mixscrap-save
 npm install
 ```
