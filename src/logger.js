@@ -11,13 +11,15 @@ if (!fs.existsSync(LOG_DIR)) {
   fs.mkdirSync(LOG_DIR, { recursive: true });
 }
 
-// small icons per level
-const ICONS = {
-  info: "ℹ️",
-  warn: "⚠️",
-  error: "❌",
-  debug: "🐞",
-  verbose: "✳️",
+// custom log symbols for better UX
+const SYMBOLS = {
+  info: "ℹ",
+  warn: "⚠",
+  error: "✖",
+  debug: "◆",
+  success: "✔",
+  progress: "▶",
+  separator: "━",
 };
 
 // colorize levels using chalk (compatible with chalk@5+)
@@ -26,35 +28,36 @@ function colorizeLevel(level, msg) {
     case "error":
       return chalk.bold.red(msg);
     case "warn":
-      // chalk.keyword removed in v5; use a bright yellow for visibility
       return chalk.yellowBright(msg);
     case "info":
+      return chalk.blue(msg);
+    case "success":
+      return chalk.bold.green(msg);
+    case "progress":
       return chalk.cyan(msg);
     case "debug":
       return chalk.magenta(msg);
-    case "verbose":
-      return chalk.gray(msg);
     default:
       return msg;
   }
 }
 
-// pretty print format for console
-const prettyConsole = printf(({ level, message, timestamp, ...meta }) => {
-  const time = chalk.dim(new Date(timestamp).toLocaleString());
-  const icon = ICONS[level] || "•";
+// pretty print format for console - user-friendly version
+const prettyConsole = printf(({ level, message, timestamp, context, ...meta }) => {
+  // Skip database operational logs in console (show only in file)
+  if (context === "db-internal") {
+    return null; // Return null to skip this log in console
+  }
 
-  // make level label (uppercase, padded) and colorize
-  const levelLabel = level.toUpperCase().padEnd(7);
-  const lvl = colorizeLevel(level, levelLabel);
+  const time = chalk.dim(new Date(timestamp).toLocaleTimeString());
+  const symbol = SYMBOLS[level] || "•";
+  const coloredSymbol = colorizeLevel(level, symbol);
 
-  // message may be object (from formatArgs) or string
+  // message formatting
   let msgStr;
   if (typeof message === "object" && message !== null) {
-    // expect { message, stack } or arbitrary object
     if (message.stack) {
       msgStr = message.message;
-      // attach stack later
     } else {
       msgStr = JSON.stringify(message, null, 2);
     }
@@ -62,16 +65,40 @@ const prettyConsole = printf(({ level, message, timestamp, ...meta }) => {
     msgStr = String(message);
   }
 
-  // safely stringify remaining meta if provided (exclude internal fields)
-  const metaKeys = Object.keys(meta || {}).filter(
-    (k) => k !== "stack" && k !== "message" && k !== "level" && k !== "timestamp"
-  );
-  const metaStr = metaKeys.length ? chalk.dim(` ${JSON.stringify(meta, null, 2)}`) : "";
+  // Color the message based on level
+  if (level === "success") {
+    msgStr = chalk.green(msgStr);
+  } else if (level === "progress") {
+    msgStr = chalk.cyan(msgStr);
+  } else if (level === "error") {
+    msgStr = chalk.red(msgStr);
+  } else if (level === "warn") {
+    msgStr = chalk.yellow(msgStr);
+  }
 
-  // if message included a stack, print it
+  // Handle meta/extra context
+  const metaKeys = Object.keys(meta || {}).filter(
+    (k) => k !== "stack" && k !== "message" && k !== "level" && k !== "timestamp" && k !== "context"
+  );
+  let metaStr = "";
+  if (metaKeys.length > 0) {
+    const cleanMeta = {};
+    metaKeys.forEach(k => cleanMeta[k] = meta[k]);
+    metaStr = chalk.dim(` ${JSON.stringify(cleanMeta)}`);
+  }
+
+  // Stack trace if available
   const stack = (message && message.stack) ? `\n${chalk.gray(message.stack)}` : "";
 
-  return `${time} ${icon} ${lvl} ${msgStr}${metaStr}${stack}`;
+  return `${time} ${coloredSymbol} ${msgStr}${metaStr}${stack}`;
+});
+
+// Filter for console to skip db-internal logs
+const consoleFilter = format((info) => {
+  if (info.context === "db-internal") {
+    return false; // Skip this log
+  }
+  return info;
 });
 
 // plain JSON format for file logs (structured)
@@ -81,12 +108,17 @@ const jsonFile = combine(timestamp(), splat(), format.json());
 const logger = createLogger({
   level: process.env.LOG_LEVEL || "info",
   transports: [
-    // Console transport: pretty
+    // Console transport: pretty and filtered (no db-internal)
     new transports.Console({
-      format: combine(timestamp(), splat(), prettyConsole),
+      format: combine(
+        timestamp(),
+        splat(),
+        consoleFilter(),
+        prettyConsole
+      ),
       handleExceptions: true,
     }),
-    // File transport: structured json for persistence (rotating not included, keep simple)
+    // File transport: all logs including db-internal (structured json)
     new transports.File({
       filename: path.join(LOG_DIR, "scraper.log"),
       format: jsonFile,
@@ -99,31 +131,28 @@ const logger = createLogger({
   exitOnError: false,
 });
 
-// convenience wrappers keeping API same as before
-export const info = (...args) => logger.info(formatArgs(args));
-export const warn = (...args) => logger.warn(formatArgs(args));
-export const error = (...args) => logger.error(formatArgs(args));
-export const debug = (...args) => logger.debug(formatArgs(args));
-export const verbose = (...args) => logger.verbose(formatArgs(args));
+// convenience wrappers with context support
+export const info = (msg, context = null) => logger.info(formatMessage(msg), { context });
+export const warn = (msg, context = null) => logger.warn(formatMessage(msg), { context });
+export const error = (msg, context = null) => logger.error(formatMessage(msg), { context });
+export const debug = (msg, context = null) => logger.debug(formatMessage(msg), { context });
+export const success = (msg, context = null) => logger.log("info", formatMessage(msg), { context });
+export const progress = (msg, context = null) => logger.log("info", formatMessage(msg), { context });
 
-// helper to handle Error or plain values
-function formatArgs(args) {
-  if (!args || args.length === 0) return "";
-  if (args.length === 1) {
-    const a = args[0];
-    if (a instanceof Error) {
-      // attach stack for pretty printing & structured logging
-      return { message: a.message, stack: a.stack };
-    }
-    // simple string or object
-    return typeof a === "object" ? a : String(a);
+// Log internal database operations (hidden from console, shown in file only)
+export const dbInternal = (msg) => logger.info(formatMessage(msg), { context: "db-internal" });
+
+// helper to format messages
+function formatMessage(msg) {
+  if (!msg) return "";
+  if (msg instanceof Error) {
+    return { message: msg.message, stack: msg.stack };
   }
-  // multiple args -> join but preserve objects
-  return args.map((a) => {
-    if (a instanceof Error) return { message: a.message, stack: a.stack };
-    if (typeof a === "object") return a;
-    return String(a);
-  });
+  if (typeof msg === "object") {
+    return JSON.stringify(msg);
+  }
+  return String(msg);
 }
 
 export default logger;
+
