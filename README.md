@@ -44,7 +44,7 @@ A robust and intelligent web scraper for collecting manga/comics metadata and pa
 - **Node.js** >= 18
 - **npm** or **yarn** for package management
 - (Optional) **Supabase account** with a project created
-- (Optional) Access to a comic API endpoint (e.g., `http://localhost:3000/api/komiku`)
+- Access to a comic API endpoint `http://localhost:3000/api/komiku`. [See this](https://github.com/fahmih6/Weebs_Scraper) to access API.
 
 ---
 
@@ -433,11 +433,11 @@ The scraper expects your API to return data in this format:
 
 ## 📄 License
 
-[Add your license here]
+![LICENSE](https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/GPLv3_Logo.svg/250px-GPLv3_Logo.svg.png)
 
 ## 👤 Author
 
-[Add author information here]
+[NovalAttasya](https://github.com/novalattasya)
 
 ## 🤝 Contributing
 
@@ -451,3 +451,4 @@ Contributions are welcome! Please feel free to submit issues or pull requests.
 - [Winston Logger](https://github.com/winstonjs/winston)
 - [p-limit](https://github.com/sindresorhus/p-limit)
 - [Axios Documentation](https://axios-http.com/)
+- [Weebs Scraper](https://github.com/fahmih6/Weebs_Scraper)
