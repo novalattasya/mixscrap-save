@@ -223,7 +223,11 @@ async function processChapterWithRetries(comic_param, ch){
     try {
       info(`Scraping chapter attempt ${attempt}/${MAX_RETRIES} -> ${chapterParam}`);
       // mark pending if adapter supports it
-      try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "pending", retries: attempt - 1, last_error: null }); } catch(e){}
+      try {
+        if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "pending", retries: attempt - 1, last_error: null });
+      } catch(e){
+        warn("Non-fatal: updateChapterStatus(pending) failed", chapterParam, e && e.message ? e.message : e);
+      }
 
       // fetch pages
       const images = await fetchChapterPages(ch.detail_url);
@@ -232,8 +236,8 @@ async function processChapterWithRetries(comic_param, ch){
       if (!Array.isArray(images) || images.length === 0) {
         const errMsg = `Empty pages array for ${chapterParam}`;
         warn(errMsg);
-        try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: errMsg, retries: attempt }); } catch(e){}
-        try { await db.insertPages(chapterParam, images || []); } catch(e){}
+        try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: errMsg, retries: attempt }); } catch(e){ warn("updateChapterStatus failed", e && e.message ? e.message : e); }
+        try { await db.insertPages(chapterParam, images || []); } catch(e){ warn("insertPages failed for empty pages", chapterParam, e && e.message ? e.message : e); }
         if (attempt < MAX_RETRIES) await sleep(RETRY_BACKOFF_MS * attempt);
         continue; // retry
       }
@@ -243,24 +247,82 @@ async function processChapterWithRetries(comic_param, ch){
       if (invalid) {
         const errMsg = `Invalid image url in pages for ${chapterParam}: ${invalid}`;
         warn(errMsg);
-        try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: errMsg, retries: attempt }); } catch(e){}
-        try { await db.insertPages(chapterParam, images); } catch(e){}
+        try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: errMsg, retries: attempt }); } catch(e){ warn("updateChapterStatus failed", e && e.message ? e.message : e); }
+        try { await db.insertPages(chapterParam, images); } catch(e){ warn("insertPages failed for invalid urls", chapterParam, e && e.message ? e.message : e); }
         if (attempt < MAX_RETRIES) await sleep(RETRY_BACKOFF_MS * attempt);
         continue; // retry
       }
 
-      // save pages (adapter should upsert or be idempotent)
-      await db.insertPages(chapterParam, images);
+      // ensure chapter meta exists (some workflows created pages first or orphan pages exist)
+      try {
+        const chapterRow = db.findChapterByParam ? await db.findChapterByParam(chapterParam) : null;
+        if (!chapterRow) {
+          // create minimal chapter meta so update can target it later
+          try {
+            await db.insertChapter(comic_param, {
+              chapter: ch.chapter || null,
+              param: chapterParam,
+              release: ch.release || null,
+              detail_url: ch.detail_url || null,
+              status: 'pending'
+            });
+            info("Inserted missing chapter meta for", chapterParam);
+          } catch (e) {
+            // ignore duplicate or other race conditions but log
+            warn("Failed to insert missing chapter meta (non-fatal)", chapterParam, e && e.message ? e.message : e);
+          }
+        }
+      } catch(e){
+        warn("check/insertChapter failed (non-fatal)", chapterParam, e && e.message ? e.message : e);
+      }
 
-      // mark scraped
-      try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "scraped", last_scraped_at: new Date().toISOString(), last_error: null, retries: attempt }); } catch(e){}
+      // save pages (adapter should upsert or be idempotent). capture return if available.
+      let pagesRow = null;
+      try {
+        pagesRow = await db.insertPages(chapterParam, images);
+      } catch(e){
+        // if insertPages fails, mark chapter failed and retry
+        const msg = e && e.message ? e.message : String(e);
+        error("insertPages failed:", chapterParam, msg);
+        try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: msg, retries: attempt }); } catch(e2){ warn("updateChapterStatus after insertPages error failed", e2 && e2.message ? e2.message : e2); }
+        if (attempt < MAX_RETRIES) {
+          await sleep(RETRY_BACKOFF_MS * attempt);
+          continue;
+        } else {
+          warn("Max attempts reached (insertPages failure) for", chapterParam);
+          return;
+        }
+      }
 
-      info(`Saved chapter ${chapterParam} with ${images.length} images`);
+      // Single reliable update: mark chapter as scraped ONLY after pages were successfully saved
+      // This is the ONLY place where we set status to "scraped" - no duplication
+      try {
+        const now = new Date().toISOString();
+        const patch = {
+          status: "scraped",
+          last_scraped_at: now,
+          last_error: null,
+          retries: attempt
+        };
+        const updated = db.updateChapterStatus ? await db.updateChapterStatus(chapterParam, patch) : null;
+        // check result: if updated is falsy, log warning
+        if (!updated) {
+          warn("updateChapterStatus returned nothing (chapter row may not exist):", chapterParam);
+        } else {
+          info("updateChapterStatus OK for", chapterParam);
+        }
+      } catch(e){
+        error("updateChapterStatus failed CRITICALLY after insertPages (chapter may be left in inconsistent state):", chapterParam, e && e.message ? e.message : e);
+        // CRITICAL ERROR: pages are saved but status not updated. Still return (don't retry) to avoid infinite loops
+        return;
+      }
+
+      info(`Saved chapter ${chapterParam} with ${Array.isArray(images)?images.length:0} images`);
       return; // success
     } catch (err) {
       const msg = err && err.message ? err.message : String(err);
       error(`Error scraping chapter ${chapterParam} attempt ${attempt}: ${msg}`);
-      try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: msg, retries: attempt }); } catch(e){}
+      try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: msg, retries: attempt }); } catch(e){ warn("updateChapterStatus failed in catch", e && e.message ? e.message : e); }
       if (attempt < MAX_RETRIES) {
         await sleep(RETRY_BACKOFF_MS * attempt);
         continue;
@@ -271,5 +333,6 @@ async function processChapterWithRetries(comic_param, ch){
     }
   }
 }
+
 
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
