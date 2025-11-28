@@ -207,11 +207,16 @@ async function processKomikItem(item){
     // scrape chapters with controlled concurrency
     const chapterTasks = toScrape.map(ch => chapterLimit(() => processChapterWithRetries(param, ch).catch(e => {
       warn(`⚠️  Chapter scraping failed: ${ch.param}`);
+      return false;
     })));
-    await Promise.all(chapterTasks);
+    const results = await Promise.all(chapterTasks);
 
-    // update comic timestamp
-    await db.updateComic(param, { updated_at: new Date().toISOString() }).catch(() => {});
+    // update comic timestamp only if at least one chapter was successfully scraped
+    const anySuccess = results.some(r => r === true);
+    if (anySuccess) {
+      await db.updateComic(param, { updated_at: new Date().toISOString() }).catch(() => {});
+      info(`   🕒 Updated comic timestamp for "${komik.title}"`);
+    }
   } catch (err) {
     warn(`⚠️  Failed processing comic: ${err && err.message ? err.message : String(err)}`);
   }
@@ -264,7 +269,7 @@ async function processChapterWithRetries(comic_param, ch){
           continue;
         } else {
           warn(`⚠️  Failed scraping: ${chapterParam} (empty images after ${MAX_RETRIES} attempts)`);
-          return;
+          return false;
         }
       }
 
@@ -279,7 +284,7 @@ async function processChapterWithRetries(comic_param, ch){
           continue;
         } else {
           warn(`⚠️  Failed scraping: ${chapterParam} (invalid URLs after ${MAX_RETRIES} attempts)`);
-          return;
+          return false;
         }
       }
 
@@ -315,7 +320,7 @@ async function processChapterWithRetries(comic_param, ch){
           continue;
         } else {
           warn(`⚠️  Failed scraping: ${chapterParam} (save error)`);
-          return;
+          return false;
         }
       }
 
@@ -336,10 +341,10 @@ async function processChapterWithRetries(comic_param, ch){
         }
       } catch(e){
         error("Critical error updating chapter status:", chapterParam);
-        return;
+        return false;
       }
 
-      return; // success
+      return true; // success
     } catch (err) {
       const msg = err && err.message ? err.message : String(err);
       try { if (db.updateChapterStatus) await db.updateChapterStatus(chapterParam, { status: "failed", last_error: msg, retries: attempt }); } catch(e){ }
@@ -348,7 +353,7 @@ async function processChapterWithRetries(comic_param, ch){
         continue;
       } else {
         warn(`⚠️  Failed scraping: ${chapterParam} (max attempts reached)`);
-        return;
+        return false;
       }
     }
   }

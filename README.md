@@ -95,14 +95,16 @@ create extension if not exists "pgcrypto";
 -- Comics table: stores comic metadata
 create table if not exists public.comics (
   id uuid default gen_random_uuid() primary key,
-  title text not null,
-  author text,
-  status text,
-  type text,
-  param text not null unique,
-  thumbnail text,
-  genre text[],
-  synopsis text,
+  -- meta fields
+  title text not null,                 -- comic title
+  author text,                         -- comic author
+  status text,                         -- comic status (ongoing/complete)
+  type text,                           -- comic type (manga/manhwa/etc.)
+  param text not null unique,          -- unique slug/identifier
+  thumbnail text,                      -- cover image URL
+  genre text[],                        -- list of genres
+  synopsis text,                       -- comic description
+  popularity bigint default 0,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -110,36 +112,64 @@ create table if not exists public.comics (
 -- Chapters table: stores chapter list and scraping status
 create table if not exists public.chapters (
   id uuid default gen_random_uuid() primary key,
-  comic_param text not null,
-  chapter text,
-  param text not null unique,
-  release text,
-  detail_url text,
-  status text default 'pending',
-  last_scraped_at timestamptz,
-  last_error text,
-  retries int default 0,
+  comic_param text not null,           -- references comics(param)
+  chapter text,                        -- chapter number/title
+  param text not null unique,          -- unique slug
+  release text,                        -- release date string
+  detail_url text,                     -- source URL
   created_at timestamptz default now(),
-  foreign key (comic_param) references public.comics(param) on delete cascade
+
+  -- scraping meta fields
+  status text default 'pending',       -- scrape status
+  last_scraped_at timestamptz,         -- last successful scrape timestamp
+  last_error text,                     -- error message
+  retries int default 0,               -- retry counter
+
+  foreign key (comic_param)
+    references public.comics(param)
+    on delete cascade
 );
 
 -- Pages table: stores chapter images
 create table if not exists public.pages (
   id uuid default gen_random_uuid() primary key,
-  chapter_param text not null unique,
-  images text[],
-  verified boolean default false,
-  last_verified_at timestamptz,
-  last_error text,
+  chapter_param text not null unique,  -- references chapters(param)
+  images text[],                       -- list of image URLs
   created_at timestamptz default now(),
-  foreign key (chapter_param) references public.chapters(param) on delete cascade
+
+  -- verification meta fields
+  verified boolean default false,      -- whether pages are verified
+  last_verified_at timestamptz,        -- last verification timestamp
+  last_error text,                     -- verification error message
+
+  foreign key (chapter_param)
+    references public.chapters(param)
+    on delete cascade
+);
+
+-- Comic views table
+create table if not exists public.comic_views (
+  id uuid default gen_random_uuid() primary key,
+  comic_param text not null,
+  created_at timestamptz default now()
 );
 
 -- Indexes for better performance
+create index if not exists idx_comic_views_comic_param on public.comic_views(comic_param);
+create index if not exists idx_comic_views_created_at on public.comic_views(created_at);
 create index if not exists idx_comics_param on public.comics(param);
 create index if not exists idx_chapters_param on public.chapters(param);
-create index if not exists idx_chapters_status on public.chapters(status);
 create index if not exists idx_pages_chapter_param on public.pages(chapter_param);
+create index if not exists idx_chapters_status on public.chapters(status);
+
+-------------------------------------------
+-- Ensure meta fields on existing comics rows
+-- (No default needed; nullable by design)
+-------------------------------------------
+update public.comics
+  set author = coalesce(author, null),
+      status = coalesce(status, null),
+      type = coalesce(type, null);
 ```
 
 ### 4. Run the Scraper
